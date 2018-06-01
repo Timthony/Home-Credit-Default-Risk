@@ -27,12 +27,14 @@ import tensorflow.contrib as contrib
 # previous_application = pd.read_csv("previous_application.csv")
 # POS_CASH_balance = pd.read_csv("POS_CASH_balance.csv")
 
-
+#==================================【数据处理模块】=========================================
+# 导入inputdata文件夹的数据，并且打印出该目录下的文件名称
 input_dir = os.path.join('inputdata')
 print('Input files:\n{}'.format(os.listdir(input_dir)))
-print('Loading data sets...')
+print('正在载入数据集...')
 
 sample_size = None
+# 读入8个原始数据集
 app_train_df = pd.read_csv(os.path.join(input_dir, 'application_train.csv'), nrows=sample_size)
 app_test_df = pd.read_csv(os.path.join(input_dir, 'application_test.csv'), nrows=sample_size)
 bureau_df = pd.read_csv(os.path.join(input_dir, 'bureau.csv'), nrows=sample_size)
@@ -54,9 +56,9 @@ def feature_engineering(app_data, bureau_df, bureau_balance_df, credit_card_df,
 
     # Previous applications
     agg_funs = {'SK_ID_CURR': 'count', 'AMT_CREDIT': 'sum'}
-    prev_apps = prev_app_df.groupby('SK_ID_CURR').agg(agg_funs)
-    prev_apps.columns = ['PREV APP COUNT', 'TOTAL PREV LOAN AMT']
-    merged_df = app_data.merge(prev_apps, left_on='SK_ID_CURR', right_index=True, how='left')
+    prev_apps = prev_app_df.groupby('SK_ID_CURR').agg(agg_funs)                          # 对数据进行分组
+    prev_apps.columns = ['PREV APP COUNT', 'TOTAL PREV LOAN AMT']                        #
+    merged_df = app_data.merge(prev_apps, left_on='SK_ID_CURR', right_index=True, how='left')   # 对数据进行连接
 
     # Average the rest of the previous app data
     prev_apps_avg = prev_app_df.groupby('SK_ID_CURR').mean()
@@ -121,18 +123,23 @@ def process_dataframe(input_df, encoder_dict=None):
     categorical_feats = categorical_feats
     encoder_dict = {}
     for feat in categorical_feats:
-        encoder = LabelEncoder()
-        input_df[feat] = encoder.fit_transform(input_df[feat].fillna('NULL'))
-        encoder_dict[feat] = encoder
+        encoder = LabelEncoder()                                      # 标准化标签，将标签值统一转换成range(标签值个数-1)范围内
+        input_df[feat] = encoder.fit_transform(input_df[feat].fillna('NULL'))            # 对标签值数字化，空缺部分填充null
+        encoder_dict[feat] = encoder                                                     # 将结果存入encoder_dict
 
-    return input_df, categorical_feats.tolist(), encoder_dict
+    return input_df, categorical_feats.tolist(), encoder_dict                            # 将数组矩阵转换为列表
 
 
+
+#
 # Merge the datasets into a single one for training
-len_train = len(app_train_df)
-app_both = pd.concat([app_train_df, app_test_df])
-merged_df = feature_engineering(app_both, bureau_df, bureau_balance_df, credit_card_df,
+# 将数据集合并成一个来进行训练
+len_train = len(app_train_df)                                                            # 训练数据的长度
+app_both = pd.concat([app_train_df, app_test_df])                                        # 将数据根据相同的轴融合
+merged_df = feature_engineering(app_both, bureau_df, bureau_balance_df, credit_card_df,  # 进行特征工程的处理
                                 pos_cash_df, prev_app_df, install_df)
+
+#merged_df.to_csv('out_merged_df.csv', index=False)
 
 # Separate metadata
 meta_cols = ['SK_ID_CURR']
@@ -206,22 +213,23 @@ train_df = merged_df[:len_train]
 predict_df = merged_df[len_train:]
 del merged_df, app_train_df, app_test_df, bureau_df, bureau_balance_df, credit_card_df, pos_cash_df, prev_app_df
 gc.collect()
-
+# 对数据进行分割，训练集和测试集的比例为8：2
 # Create a validation set to check training performance
-X_train, X_valid, y_train, y_valid = train_test_split(train_df, target, test_size=0.2, random_state=2)
+X_train, X_valid, y_train, y_valid = train_test_split(train_df, target, test_size=0.2, random_state=666)
 
 
-# Fixed graph parameters
+# 定义图的参数Fixed graph parameters
 n_inputs = X_train.shape[1]
 n_classes = 2
 n_hidden_1 = 20
 n_hidden_2 = 20
 n_hidden_3 = 10
+n_hidden_4 = 10
 
 # Learning parameters
-learning_rate = 0.01
+learning_rate = 0.001
 n_epochs = 30
-n_iterations = 400
+n_iterations = 1000
 batch_size = 250
 
 # # Graph
@@ -231,6 +239,8 @@ tf.reset_default_graph()
 X = tf.placeholder(tf.float32, shape=(None, n_inputs), name='X')
 y = tf.placeholder(tf.int32, shape=(None, n_classes), name='labels')
 
+# 定义神经网络的每一层
+# 为了防止过拟合，第一层增加了L2正则化去调整权重，和一些dropout层
 # Define the network layers.
 # Overfitting is a challenge so add L2 regularisation to weights in 1st layer &
 # a couple of dropout layers
@@ -243,7 +253,7 @@ with tf.name_scope('dnn'):
                                      )
 
     drop_layer_1 = tf.layers.dropout(inputs=hidden_layer_1,
-                                     rate=0.4,
+                                     rate=0.5,
                                      name='first_dropout_layer')
 
     hidden_layer_2 = tf.layers.dense(inputs=drop_layer_1,
@@ -252,15 +262,22 @@ with tf.name_scope('dnn'):
                                      activation=tf.nn.relu)
 
     drop_layer_2 = tf.layers.dropout(inputs=hidden_layer_2,
-                                     rate=0.6,
+                                     rate=0.5,
                                      name='second_dropout_layer')
 
-    hidden_layer_3 = tf.layers.dense(inputs=drop_layer_1,
+    hidden_layer_3 = tf.layers.dense(inputs=drop_layer_2,
                                      units=n_hidden_3,
                                      name='third_hidden_layer',
                                      activation=tf.nn.relu)
+    drop_layer_3 = tf.layers.dropout(inputs=hidden_layer_3,
+                                     rate=0.5,
+                                     name='third_dropout_layer')
 
-    logits = tf.layers.dense(inputs=hidden_layer_3,
+    hidden_layer_4 = tf.layers.dense(inputs=drop_layer_3,
+                                     units=n_hidden_4,
+                                     name='four_hidden_layer',
+                                     activation=tf.nn.relu)
+    logits = tf.layers.dense(inputs=hidden_layer_4,
                              units=n_classes,
                              name='outputs')
 
@@ -319,7 +336,7 @@ with tf.Session() as sess:
                                           feed_dict={X: X_valid})
         valid_auc.append(roc_auc_score(y_valid[:, 1], y_prob_val[:, 1]))
 
-        # Early stopping
+        # 为了防止过拟合，当模型逐渐变差的时候提前终止Early stopping
         if epoch > 1:
             best_epoch_so_far = np.argmax(valid_auc[:-1])
             if valid_auc[epoch] <= valid_auc[best_epoch_so_far]:
