@@ -78,7 +78,7 @@ def feature_engineering(app_data, bureau_df, bureau_balance_df, credit_card_df,
     credit_card_avgs = credit_card_df.groupby('SK_ID_CURR').agg(wm)
     merged_df = merged_df.merge(credit_card_avgs, left_on='SK_ID_CURR', right_index=True,
                                 how='left', suffixes=['', '_CCAVG'])
-    # Credit card data - categorical features
+    # Credit card data -
     most_recent_index = credit_card_df.groupby('SK_ID_CURR')['MONTHS_BALANCE'].idxmax()
     cat_feats = credit_card_df.columns[credit_card_df.dtypes == 'object'].tolist()  + ['SK_ID_CURR']
     merged_df = merged_df.merge(credit_card_df.loc[most_recent_index, cat_feats], left_on='SK_ID_CURR', right_on='SK_ID_CURR',
@@ -140,6 +140,12 @@ merged_df = feature_engineering(app_both, bureau_df, bureau_balance_df, credit_c
                                 pos_cash_df, prev_app_df, install_df)
 
 #merged_df.to_csv('out_merged_df.csv', index=False)
+
+
+out_merged_df = pd.read_csv('out_merged_df.csv')
+
+
+
 
 # Separate metadata
 meta_cols = ['SK_ID_CURR']
