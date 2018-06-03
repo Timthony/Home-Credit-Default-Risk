@@ -144,16 +144,14 @@ gc.collect()
 target = train_df.pop('TARGET')                                      # 移除标签数据，并且返回‘Target’的值
 test_df.drop(columns='TARGET', inplace=True)                         # 测试数据删除‘TARGET这一列’
 
-
-
-
+# 数据转换
 lgbm_train = lgbm.Dataset(data=train_df,
                           label=target,
                           categorical_feature=categorical_feats,
                           free_raw_data=False)
 del app_train_df
 gc.collect()
-
+# 设置参数
 lgbm_params = {
     'boosting': 'dart',
     'application': 'binary',
@@ -162,17 +160,152 @@ lgbm_params = {
     'num_leaves': 50,                                                # 决策树叶子节点数 Lightgbm用决策树叶子节点数来确定树的复杂度
     'max_depth': -1,
     'feature_fraction': 0.5,
+    'bagging_fraction':0.5,
     'scale_pos_weight': 2,
-    'drop_rate': 0.02
+    'drop_rate': 0.02,
+    'max_bin':255,
+    'bagging_freq':0,
+    'lambda_l1':0,
+    'lambda_l2':0,
+    'min_split_gain':0
 }
 
-cv_results = lgbm.cv(train_set=lgbm_train,
-                     params=lgbm_params,
-                     nfold=5,
-                     num_boost_round=2000,
-                     early_stopping_rounds=50,
-                     verbose_eval=50,
-                     metrics=['auc'])
+# 网格搜索，寻找最佳的超参数
+best_params = {}
+max_auc = float('-inf')
+# 准确率
+print('调参1：提高准确率')
+for num_leaves in range(20,200,5):
+    for max_depth in range(3,8,1):
+        lgbm_params['num_leaves'] = num_leaves
+        lgbm_params['max_depth'] = max_depth
+        # 使用给定的参数完成交叉验证
+        cv_results = lgbm.cv(params=lgbm_params,
+                             train_set=lgbm_train,
+                             seed=2018,
+                             nfold=5,
+                             metrics=['auc'],
+                             early_stopping_rounds=50,
+                             verbose_eval=50,
+                             num_boost_round=2000,
+        )
+        mean_auc = pd.Series(cv_results['auc-mean']).max()
+        boost_rounds = pd.Series(cv_results['auc-mean']).argmax()
+        if mean_auc > max_auc:
+            max_auc = mean_auc
+            best_params['num_leaves'] = num_leaves
+            best_params['max_depth'] = max_depth
+
+lgbm_params['num_leaves'] = best_params['num_leaves']
+lgbm_params['max_depth'] = best_params['max_depth']
+
+
+# 过拟合
+print('调参2：降低过拟合')
+for max_bin in range(1,255,5):
+    for min_data_in_leaf in range(10,200,5):
+        lgbm_params['max_bin'] = max_bin
+        lgbm_params['min_data_in_leaf'] = min_data_in_leaf
+
+        cv_results = lgbm.cv(params=lgbm_params,
+                             train_set=lgbm_train,
+                             seed=42,
+                             nfold=5,
+                             metrics=['auc'],
+                             early_stopping_rounds=50,
+                             num_boost_round=2000,
+                             verbose_eval=50)
+        mean_auc = pd.Series(cv_results['auc-mean']).max()
+        boost_rounds = pd.Series(cv_results['auc-mean']).argmax()
+
+        if mean_auc > max_auc:
+            max_auc = mean_auc
+            best_params['max_bin'] = max_bin
+            best_params['min_data_in_leaf'] = min_data_in_leaf
+lgbm_params['max_bin'] = best_params['max_bin']
+lgbm_params['min_data_in_leaf'] = best_params['min_data_in_leaf']
+
+# 继续降低过拟合
+print("调参3：降低过拟合")
+for feature_fraction in [0.0, 0.1, 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]:
+    for bagging_fraction in [0.0, 0.1, 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]:
+        for bagging_freq in range(0,50,5):
+            lgbm_params['feature_fraction'] = feature_fraction
+            lgbm_params['bagging_fraction'] = bagging_fraction
+            lgbm_params['bagging_freq'] = bagging_freq
+
+            cv_results = lgbm.cv(params=lgbm_params,
+                                 train_set= lgbm_train,
+                                 nfold=5,
+                                 seed=42,
+                                 metrics=['auc'],
+                                 early_stopping_rounds=50,
+                                 num_boost_round=2000,
+                                 verbose_eval=50)
+            mean_auc = pd.Series(cv_results['auc-mean']).max()
+            boost_rounds = pd.Series(cv_results['auc-mean']).argmax()
+
+            if mean_auc > max_auc:
+                max_auc = mean_auc
+                best_params['feature_fraction'] = feature_fraction
+                best_params['bagging_fraction'] = bagging_fraction
+                best_params['bagging_freq'] = bagging_freq
+
+lgbm_params['feature_fraction'] = best_params['feature_fraction']
+lgbm_params['bagging_fraction'] = best_params['bagging_fraction']
+lgbm_params['bagging_freq'] = best_params['bagging_freq']
+
+print("调参4：降低过拟合")
+for lambda_l1 in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+    for lambda_l2 in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+        for min_split_gain in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+            lgbm_params['lambda_l1'] = lambda_l1
+            lgbm_params['lambda_l2'] = lambda_l2
+            lgbm_params['min_split_gain'] = min_split_gain
+
+            cv_results = lgbm.cv(
+                params=lgbm_params,
+                train_set=lgbm_train,
+                seed=42,
+                nfold=5,
+                metrics=['auc'],
+                early_stopping_rounds=50,
+                num_boost_round=2000,
+                verbose_eval=50
+            )
+
+            mean_auc = pd.Series(cv_results['auc-mean']).min()
+            boost_rounds = pd.Series(cv_results['auc-mean']).argmin()
+
+            if mean_auc > max_auc:
+                max_auc = mean_auc
+                best_params['lambda_l1'] = lambda_l1
+                best_params['lambda_l2'] = lambda_l2
+                best_params['min_split_gain'] = min_split_gain
+
+lgbm_params['lambda_l1'] = best_params['lambda_l1']
+lgbm_params['lambda_l2'] = best_params['lambda_l2']
+lgbm_params['min_split_gain'] = best_params['min_split_gain']
+
+print(best_params)
+
+
+
+
+
+
+
+
+
+#
+#
+# cv_results = lgbm.cv(train_set=lgbm_train,
+#                      params=lgbm_params,
+#                      nfold=5,
+#                      num_boost_round=2000,
+#                      early_stopping_rounds=50,
+#                      verbose_eval=50,
+#                      metrics=['auc'])
 
 optimum_boost_rounds = np.argmax(cv_results['auc-mean'])             # 返回auc-mean的最大值的索引的位置
 print('Optimum boost rounds = {}'.format(optimum_boost_rounds))      # 打印出该值
